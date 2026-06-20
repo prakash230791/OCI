@@ -1,0 +1,123 @@
+# OCI Homelab - Deploy Workflow
+# Provisions the OCI infrastructure via Terraform.
+# Triggers: push to main branch OR manual workflow_dispatch.
+
+name: Deploy OCI Homelab
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+    inputs:
+      confirm:
+        description: "Type YES to confirm deployment"
+        required: false
+        default: "YES"
+
+jobs:
+  deploy:
+    name: Terraform Deploy
+    runs-on: ubuntu-latest
+
+    steps:
+      # -----------------------------------------------------------------------
+      # 1. Checkout repository
+      # -----------------------------------------------------------------------
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      # -----------------------------------------------------------------------
+      # 2. Install Terraform
+      # -----------------------------------------------------------------------
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "1.7.0"
+
+      # -----------------------------------------------------------------------
+      # 3. Write OCI private key to file (provider needs a file path in CI)
+      # -----------------------------------------------------------------------
+      - name: Write OCI private key
+        run: |
+          echo "${{ secrets.OCI_PRIVATE_KEY }}" > oci_key.pem
+          chmod 600 oci_key.pem
+
+      # -----------------------------------------------------------------------
+      # 4. Patch main.tf to use private_key_path instead of private_key inline
+      #    (OCI Terraform provider also accepts a file path; avoids newline issues)
+      # -----------------------------------------------------------------------
+      - name: Patch provider to use private_key_path
+        run: |
+          sed -i 's/private_key  = var.private_key/private_key_path = "oci_key.pem"/' main.tf
+
+      # -----------------------------------------------------------------------
+      # 5. Generate terraform.tfvars from GitHub Secrets
+      # -----------------------------------------------------------------------
+      - name: Create terraform.tfvars
+        run: |
+          cat > terraform.tfvars <<EOF
+          tenancy_ocid   = "${{ secrets.OCI_TENANCY_OCID }}"
+          user_ocid      = "${{ secrets.OCI_USER_OCID }}"
+          fingerprint    = "${{ secrets.OCI_FINGERPRINT }}"
+          private_key    = ""
+          region         = "${{ secrets.OCI_REGION }}"
+          ssh_public_key = "${{ secrets.SSH_PUBLIC_KEY }}"
+          EOF
+
+      # -----------------------------------------------------------------------
+      # 6. Terraform init
+      # -----------------------------------------------------------------------
+      - name: Terraform Init
+        run: terraform init
+
+      # -----------------------------------------------------------------------
+      # 7. Terraform validate
+      # -----------------------------------------------------------------------
+      - name: Terraform Validate
+        run: terraform validate
+
+      # -----------------------------------------------------------------------
+      # 8. Terraform plan
+      # -----------------------------------------------------------------------
+      - name: Terraform Plan
+        run: terraform plan -out=tfplan
+
+      # -----------------------------------------------------------------------
+      # 9. Terraform apply with retry loop
+      #    OCI A1 ARM shapes are sometimes out of capacity; retry up to 10 times.
+      # -----------------------------------------------------------------------
+      - name: Terraform Apply (with retry)
+        run: |
+          MAX_RETRIES=10
+          RETRY_SLEEP=60
+          attempt=0
+
+          until terraform apply -auto-approve tfplan; do
+            attempt=$((attempt + 1))
+            if [ $attempt -ge $MAX_RETRIES ]; then
+              echo "ERROR: Terraform apply failed after $MAX_RETRIES attempts."
+              exit 1
+            fi
+            echo "Apply failed (attempt $attempt/$MAX_RETRIES). Retrying in ${RETRY_SLEEP}s..."
+            # On capacity errors the existing plan may be stale; re-plan
+            terraform plan -out=tfplan
+            sleep $RETRY_SLEEP
+          done
+
+          echo "Terraform apply succeeded on attempt $((attempt + 1))."
+
+      # -----------------------------------------------------------------------
+      # 10. Output the public IP for easy access
+      # -----------------------------------------------------------------------
+      - name: Show outputs
+        run: |
+          echo "========================================"
+          echo "  Deployment complete!"
+          echo "========================================"
+          terraform output public_ip
+          terraform output ssh_command
+          terraform output airflow_url
+          echo ""
+          echo "NOTE: Cloud-init takes ~10 minutes to finish installing packages."
+          echo "Monitor progress: ssh ubuntu@$(terraform output -raw public_ip) 'tail -f /var/log/cloud-init-output.log'"

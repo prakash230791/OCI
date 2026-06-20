@@ -1,0 +1,169 @@
+#cloud-config
+# OCI Homelab - Cloud Init Bootstrap Script
+# Runs once on first boot as root. Sets up the full AI pipeline environment.
+
+# Ensure apt operations don't prompt interactively
+package_update: true
+package_upgrade: true
+
+packages:
+  - git
+  - curl
+  - wget
+  - htop
+  - python3
+  - python3-pip
+  - python3-venv
+  - postgresql
+  - postgresql-contrib
+  - docker.io
+  - docker-compose
+  - iptables-persistent
+  - netfilter-persistent
+
+runcmd:
+  # ---------------------------------------------------------------------------
+  # Docker — enable, start, add ubuntu user to docker group
+  # ---------------------------------------------------------------------------
+  - systemctl enable docker
+  - systemctl start docker
+  - usermod -aG docker ubuntu
+
+  # ---------------------------------------------------------------------------
+  # PostgreSQL — enable, start, create user + database for AI pipeline
+  # ---------------------------------------------------------------------------
+  - systemctl enable postgresql
+  - systemctl start postgresql
+  - |
+    sudo -u postgres psql -c "CREATE USER aiuser WITH PASSWORD 'aipassword';"
+  - |
+    sudo -u postgres psql -c "CREATE DATABASE ai_pipeline OWNER aiuser;"
+  - |
+    sudo -u postgres psql -c "GRANT ALL PRIVILEGES ON DATABASE ai_pipeline TO aiuser;"
+
+  # ---------------------------------------------------------------------------
+  # Python packages — system-wide pip3 install
+  # ---------------------------------------------------------------------------
+  - pip3 install --break-system-packages --upgrade pip
+  - >
+    pip3 install --break-system-packages
+    yfinance
+    ta-lib-binary
+    chromadb
+    groq
+    langchain
+    langchain-community
+    psycopg2-binary
+    requests
+    pandas
+    "apache-airflow==2.9.3"
+    vastai
+    "python-telegram-bot==20.7"
+
+  # ---------------------------------------------------------------------------
+  # Directory structure for AI pipeline
+  # ---------------------------------------------------------------------------
+  - mkdir -p /home/ubuntu/ai-pipeline/{dags,scripts,data,models,logs}
+  - chown -R ubuntu:ubuntu /home/ubuntu/ai-pipeline
+
+  # ---------------------------------------------------------------------------
+  # Airflow — initialise database and create admin user
+  # ---------------------------------------------------------------------------
+  - export AIRFLOW_HOME=/home/ubuntu/airflow
+  - sudo -u ubuntu bash -c 'export AIRFLOW_HOME=/home/ubuntu/airflow && airflow db init'
+  - |
+    sudo -u ubuntu bash -c '
+      export AIRFLOW_HOME=/home/ubuntu/airflow
+      airflow users create \
+        --username admin \
+        --password admin123 \
+        --firstname Admin \
+        --lastname User \
+        --role Admin \
+        --email admin@homelab.com
+    '
+  - chown -R ubuntu:ubuntu /home/ubuntu/airflow
+
+  # ---------------------------------------------------------------------------
+  # Airflow — start webserver and scheduler in background (nohup)
+  # ---------------------------------------------------------------------------
+  - |
+    sudo -u ubuntu bash -c '
+      export AIRFLOW_HOME=/home/ubuntu/airflow
+      nohup airflow webserver --port 8080 > /home/ubuntu/airflow/logs/webserver.log 2>&1 &
+      echo $! > /home/ubuntu/airflow/webserver.pid
+    '
+  - sleep 5
+  - |
+    sudo -u ubuntu bash -c '
+      export AIRFLOW_HOME=/home/ubuntu/airflow
+      nohup airflow scheduler > /home/ubuntu/airflow/logs/scheduler.log 2>&1 &
+      echo $! > /home/ubuntu/airflow/scheduler.pid
+    '
+
+  # ---------------------------------------------------------------------------
+  # Firewall — open application ports via iptables
+  # ---------------------------------------------------------------------------
+  - iptables -I INPUT -p tcp --dport 8080 -j ACCEPT
+  - iptables -I INPUT -p tcp --dport 8000 -j ACCEPT
+  - iptables -I INPUT -p tcp --dport 3000 -j ACCEPT
+  - iptables -I INPUT -p tcp --dport 5432 -j ACCEPT
+  - netfilter-persistent save
+
+  # ---------------------------------------------------------------------------
+  # Test setup script — verifies Python imports and prints live AAPL price
+  # ---------------------------------------------------------------------------
+  - |
+    cat > /home/ubuntu/ai-pipeline/scripts/test_setup.py << 'PYEOF'
+    #!/usr/bin/env python3
+    """Quick smoke-test: verifies key Python packages are importable and working."""
+
+    import sys
+
+    def test_yfinance():
+        import yfinance as yf
+        ticker = yf.Ticker("AAPL")
+        info = ticker.fast_info
+        price = info.last_price
+        print(f"[OK] yfinance — AAPL last price: ${price:.2f}")
+
+    def test_chromadb():
+        import chromadb
+        client = chromadb.Client()
+        col = client.create_collection("test")
+        col.add(documents=["hello world"], ids=["1"])
+        print("[OK] chromadb — in-memory collection created successfully")
+
+    def test_groq():
+        import groq
+        # Just test the import; API call needs a real key
+        print(f"[OK] groq — module version: {groq.__version__}")
+
+    def test_pandas():
+        import pandas as pd
+        df = pd.DataFrame({"a": [1, 2, 3]})
+        print(f"[OK] pandas — DataFrame shape: {df.shape}")
+
+    tests = [test_yfinance, test_chromadb, test_groq, test_pandas]
+    failures = []
+    for t in tests:
+        try:
+            t()
+        except Exception as e:
+            print(f"[FAIL] {t.__name__}: {e}")
+            failures.append(t.__name__)
+
+    if failures:
+        print(f"\nFailed tests: {failures}")
+        sys.exit(1)
+    else:
+        print("\nAll tests passed!")
+    PYEOF
+  - chmod +x /home/ubuntu/ai-pipeline/scripts/test_setup.py
+  - chown ubuntu:ubuntu /home/ubuntu/ai-pipeline/scripts/test_setup.py
+
+final_message: |
+  OCI Homelab bootstrap complete.
+  Airflow UI: http://PUBLIC_IP:8080  (admin / admin123)
+  PostgreSQL:  aiuser / aipassword @ localhost:5432/ai_pipeline
+  Test script: python3 /home/ubuntu/ai-pipeline/scripts/test_setup.py
