@@ -58,12 +58,18 @@ jobs:
       - name: Create terraform.tfvars
         run: |
           cat > terraform.tfvars <<EOF
-          tenancy_ocid   = "${{ secrets.OCI_TENANCY_OCID }}"
-          user_ocid      = "${{ secrets.OCI_USER_OCID }}"
-          fingerprint    = "${{ secrets.OCI_FINGERPRINT }}"
-          private_key    = ""
-          region         = "${{ secrets.OCI_REGION }}"
-          ssh_public_key = "${{ secrets.SSH_PUBLIC_KEY }}"
+          tenancy_ocid            = "${{ secrets.OCI_TENANCY_OCID }}"
+          user_ocid               = "${{ secrets.OCI_USER_OCID }}"
+          fingerprint             = "${{ secrets.OCI_FINGERPRINT }}"
+          private_key             = ""
+          region                  = "${{ secrets.OCI_REGION }}"
+          ssh_public_key          = "${{ secrets.SSH_PUBLIC_KEY }}"
+          availability_domain     = "${{ secrets.OCI_AVAILABILITY_DOMAIN }}"
+          ubuntu_image_id         = "${{ secrets.OCI_UBUNTU_IMAGE_ID }}"
+          instance_display_name   = "${{ secrets.OCI_INSTANCE_DISPLAY_NAME }}"
+          ocpus                   = 2
+          memory_in_gbs           = 12
+          boot_volume_size_in_gbs = 100
           EOF
 
       # -----------------------------------------------------------------------
@@ -85,33 +91,11 @@ jobs:
         run: terraform plan -out=tfplan
 
       # -----------------------------------------------------------------------
-      # 9. Terraform apply with retry loop
-      #    OCI A1 ARM free-tier capacity is scarce. Strategy:
-      #    - Rotate through all 3 Ashburn ADs on each attempt (AD-1, AD-2, AD-3)
-      #    - Sleep 5 minutes between retries
-      #    - Up to 60 retries (~5 hours) — well within the 6-hour job timeout
+      # 9. Terraform apply
+      #    Paid tier with $300 free credits — capacity is guaranteed.
       # -----------------------------------------------------------------------
-      - name: Terraform Apply (with retry)
-        run: |
-          MAX_RETRIES=60
-          RETRY_SLEEP=300
-          AD_COUNT=3
-          attempt=0
-
-          until terraform apply -auto-approve tfplan; do
-            attempt=$((attempt + 1))
-            if [ $attempt -ge $MAX_RETRIES ]; then
-              echo "ERROR: Terraform apply failed after $MAX_RETRIES attempts."
-              exit 1
-            fi
-            ad_index=$((attempt % AD_COUNT))
-            echo "Apply failed (attempt $attempt/$MAX_RETRIES). Switching to AD index ${ad_index}. Retrying in ${RETRY_SLEEP}s..."
-            sleep $RETRY_SLEEP
-            export TF_VAR_ad_index=$ad_index
-            terraform plan -out=tfplan
-          done
-
-          echo "Terraform apply succeeded on attempt $((attempt + 1))."
+      - name: Terraform Apply
+        run: terraform apply -auto-approve tfplan
 
       # -----------------------------------------------------------------------
       # 10. Output the public IP for easy access
