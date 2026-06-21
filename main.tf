@@ -21,25 +21,15 @@ provider "oci" {
   region       = var.region
 }
 
-# ---------------------------------------------------------------------------
-# Availability Domain — pick the first one in the region
-# ---------------------------------------------------------------------------
-data "oci_identity_availability_domains" "ads" {
-  compartment_id = var.tenancy_ocid
-}
-
-locals {
-  availability_domain = data.oci_identity_availability_domains.ads.availability_domains[0].name
-}
 
 # ---------------------------------------------------------------------------
-# Ubuntu 24.04 ARM (aarch64) — latest canonical image
+# Ubuntu 20.04 ARM (aarch64) — Canonical image
 # ---------------------------------------------------------------------------
 data "oci_core_images" "ubuntu_arm" {
   compartment_id           = var.tenancy_ocid
   operating_system         = "Canonical Ubuntu"
-  operating_system_version = "24.04"
-  shape                    = "VM.Standard.A1.Flex"
+  operating_system_version = "20.04"
+  shape                    = "VM.Standard.A2.Flex"
   sort_by                  = "TIMECREATED"
   sort_order               = "DESC"
 
@@ -166,23 +156,24 @@ resource "oci_core_subnet" "homelab_subnet" {
 }
 
 # ---------------------------------------------------------------------------
-# Compute Instance — VM.Standard.A1.Flex (ARM, Free-Tier eligible)
+# Compute Instance — VM.Standard.A2.Flex (ARM, Paid tier with $300 credits)
 # ---------------------------------------------------------------------------
 resource "oci_core_instance" "homelab_vm" {
   compartment_id      = var.tenancy_ocid
-  availability_domain = local.availability_domain
-  display_name        = "homelab-vm"
-  shape               = "VM.Standard.A1.Flex"
+  availability_domain = var.availability_domain
+  fault_domain        = var.fault_domain
+  display_name        = var.instance_display_name
+  shape               = "VM.Standard.A2.Flex"
 
   shape_config {
-    ocpus         = 2
-    memory_in_gbs = 12
+    ocpus         = var.ocpus
+    memory_in_gbs = var.memory_in_gbs
   }
 
   source_details {
     source_type             = "image"
-    source_id               = data.oci_core_images.ubuntu_arm.images[0].id
-    boot_volume_size_in_gbs = 100
+    source_id               = var.ubuntu_image_id
+    boot_volume_size_in_gbs = var.boot_volume_size_in_gbs
   }
 
   create_vnic_details {
@@ -191,13 +182,20 @@ resource "oci_core_instance" "homelab_vm" {
     display_name     = "homelab-vnic"
   }
 
+  launch_options {
+    network_type                        = "PARAVIRTUALIZED"
+    remote_data_volume_type             = "PARAVIRTUALIZED"
+    boot_volume_type                    = "PARAVIRTUALIZED"
+    firmware                            = "UEFI_64"
+    is_pv_encryption_in_transit_enabled = true
+  }
+
   metadata = {
     ssh_authorized_keys = var.ssh_public_key
     # cloud-init script is base64-encoded so OCI can pass it verbatim
     user_data = base64encode(file("${path.module}/cloud-init.yaml"))
   }
 
-  # Prevent accidental replacement when image list order changes
   lifecycle {
     ignore_changes = [source_details[0].source_id]
   }
