@@ -35,3 +35,9 @@ variable "ssh_public_key" {
   description = "SSH public key (ed25519 or RSA) to inject into the instance for ubuntu user login."
   type        = string
 }
+
+variable "ad_index" {
+  description = "Zero-based index into the availability_domains list. Cycled by the deploy workflow to find an AD with free ARM capacity."
+  type        = number
+  default     = 0
+}

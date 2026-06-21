@@ -19,6 +19,7 @@ jobs:
   deploy:
     name: Terraform Deploy
     runs-on: ubuntu-latest
+    timeout-minutes: 360
 
     steps:
       # -----------------------------------------------------------------------
@@ -85,12 +86,16 @@ jobs:
 
       # -----------------------------------------------------------------------
       # 9. Terraform apply with retry loop
-      #    OCI A1 ARM shapes are sometimes out of capacity; retry up to 10 times.
+      #    OCI A1 ARM free-tier capacity is scarce. Strategy:
+      #    - Rotate through all 3 Ashburn ADs on each attempt (AD-1, AD-2, AD-3)
+      #    - Sleep 5 minutes between retries
+      #    - Up to 60 retries (~5 hours) — well within the 6-hour job timeout
       # -----------------------------------------------------------------------
       - name: Terraform Apply (with retry)
         run: |
-          MAX_RETRIES=10
-          RETRY_SLEEP=60
+          MAX_RETRIES=60
+          RETRY_SLEEP=300
+          AD_COUNT=3
           attempt=0
 
           until terraform apply -auto-approve tfplan; do
@@ -99,10 +104,11 @@ jobs:
               echo "ERROR: Terraform apply failed after $MAX_RETRIES attempts."
               exit 1
             fi
-            echo "Apply failed (attempt $attempt/$MAX_RETRIES). Retrying in ${RETRY_SLEEP}s..."
-            # On capacity errors the existing plan may be stale; re-plan
-            terraform plan -out=tfplan
+            ad_index=$((attempt % AD_COUNT))
+            echo "Apply failed (attempt $attempt/$MAX_RETRIES). Switching to AD index ${ad_index}. Retrying in ${RETRY_SLEEP}s..."
             sleep $RETRY_SLEEP
+            export TF_VAR_ad_index=$ad_index
+            terraform plan -out=tfplan
           done
 
           echo "Terraform apply succeeded on attempt $((attempt + 1))."
