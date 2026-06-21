@@ -1,0 +1,44 @@
+# OCI Homelab - Terraform Variables (Paid Tier with $300 Credits)
+# Copy this to terraform.tfvars and fill in your OCI details
+# Found in OCI Console → Infrastructure → Compute → Instances
+
+# ============================================================================
+# OCI Authentication & Tenancy
+# ============================================================================
+tenancy_ocid = "ocid1.tenancy.oc1..aaaaaaaxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+user_ocid    = "ocid1.user.oc1..aaaaaaaxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+fingerprint  = "xx:xx:xx:xx:xx:xx:xx:xx:xx:xx:xx:xx:xx:xx:xx:xx"
+private_key  = file("~/.oci/oci_api_key.pem")
+region       = "us-ashburn-1"
+
+# ============================================================================
+# SSH Public Key
+# ============================================================================
+ssh_public_key = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX"
+
+# ============================================================================
+# Instance Configuration
+# ============================================================================
+# Found in OCI Console → Infrastructure → Compute → Instances
+# Example: nhrz:US-ASHBURN-AD-1
+availability_domain = "nhrz:US-ASHBURN-AD-1"
+
+# Fault domain (optional, found in instance details)
+# fault_domain = "FAULT-DOMAIN-3"
+
+# Display name for the instance
+instance_display_name = "instance-20260621-1000"
+
+# Shape configuration
+ocpus         = 2
+memory_in_gbs = 12
+
+# ============================================================================
+# Image Configuration
+# ============================================================================
+# Ubuntu 20.04 ARM (aarch64) image OCID
+# Found in OCI Console → Compute → Images → search "Ubuntu 20.04" with aarch64 filter
+# Example: ocid1.image.oc1.iad.aaaaaaaaioyy7je3vndsccly24frkfptl5lggvyupubg74awcf2gmua7k3ra
+ubuntu_image_id = "ocid1.image.oc1.iad.aaaaaaaxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+
+boot_volume_size_in_gbs = 100
